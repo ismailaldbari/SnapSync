@@ -23,7 +23,7 @@ if ! command -v rsync &> /dev/null; then
 fi
 
 
-BACKUP_DIR="/media/sda3/snapsync/snapshots"
+BACKUP_DIR="~/snapsync/snapshots"
 SNAPSHOT_NAME=""
 SNAPSHOT_DIR=""
 EXCLUDE_FILE=""
