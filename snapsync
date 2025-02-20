@@ -1,0 +1,203 @@
+#!/bin/bash
+
+# Check if rsync is installed
+if ! command -v rsync &> /dev/null; then
+    echo "rsync is not installed. Installing rsync..."
+    
+    # Detect the package manager and install rsync
+    if command -v apt &> /dev/null; then
+        sudo apt update
+        sudo apt install -y rsync
+    elif command -v dnf &> /dev/null; then
+        sudo dnf install -y rsync
+    elif command -v yum &> /dev/null; then
+        sudo yum install -y rsync
+    elif command -v pacman &> /dev/null; then
+        sudo pacman -S --noconfirm rsync
+    else
+        echo "Unsupported package manager. Please install rsync manually."
+        exit 1
+    fi
+    
+    echo "rsync has been installed successfully."
+fi
+
+
+BACKUP_DIR="/media/sda3/snapsync/snapshots"
+SNAPSHOT_NAME=""
+SNAPSHOT_DIR=""
+EXCLUDE_FILE=""
+
+
+EXCLUSIONS=(
+    "/dev/*" "/proc/*" "/sys/*" "/media/*" "/mnt/*" "/tmp/*" "/run/*" "/var/run/*" "/var/lock/*" "/var/lib/dhcpcd/*"
+    "/var/lib/docker/*" "/var/lib/schroot/*" "/lost+found" "/timeshift/*" "/timeshift-btrfs/*" "/data/*" "/DATA/*"
+    "/cdrom/*" "/sdcard/*" "/system/*" "/etc/timeshift.json" "/var/log/timeshift/*" "/var/log/timeshift-btrfs/*"
+    "/swapfile" "/snap/*" "/root/.thumbnails" "/root/.cache" "/root/.dbus" "/root/.gvfs" "/root/.local/share/[Tt]rash"
+    "/home/*/.thumbnails" "/home/*/.cache" "/home/*/.dbus" "/home/*/.gvfs" "/home/*/.local/share/[Tt]rash"
+    "/root/.mozilla/firefox/*.default/Cache" "/root/.mozilla/firefox/*.default/OfflineCache" "/root/.opera/cache"
+    "/root/.kde/share/apps/kio_http/cache" "/root/.kde/share/cache/http" "/home/*/.mozilla/firefox/*.default/Cache"
+    "/home/*/.mozilla/firefox/*.default/OfflineCache" "/home/*/.opera/cache" "/home/*/.kde/share/apps/kio_http/cache"
+    "/home/*/.kde/share/cache/http" "/var/cache/apt/archives/*" "/var/cache/pacman/pkg/*" "/var/cache/yum/*"
+    "/var/cache/dnf/*" "/var/cache/eopkg/*" "/var/cache/xbps/*" "/var/cache/zypp/*" "/var/cache/edb/*"
+    "/home/ismail/**" "/root/**" "/home/*/**"
+)
+
+#Function to create or update the backup
+backup_system(){
+    echo
+    echo "📂 Available snapshots:"
+    echo
+    SNAPSHOTS=($(ls "$BACKUP_DIR"))
+    for i in "${!SNAPSHOTS[@]}"; do
+        echo "$((i+1))) ${SNAPSHOTS[$i]}"
+    done
+    echo
+    
+    read -p "Do you want to:
+  [N] Create a new snapshot
+  [U] Update an existing snapshot
+Enter your choice (N/U): " ACTION
+    ACTION=$(echo "$ACTION" | tr '[:upper:]' '[:lower:]')  # تحويل الإدخال إلى أحرف صغيرة
+
+    
+    if [[ "$ACTION" == "n" ]]; then
+        read -p "Do you want to enter a custom snapshot name? (yes/y to enter, any key for default): " USE_CUSTOM_NAME
+        if [[ "$USE_CUSTOM_NAME" == "yes" || "$USE_CUSTOM_NAME" == "y" ]]; then
+            read -p "Enter the custom snapshot name: " SNAPSHOT_NAME
+        else
+            # Generate a default name based on the current date and time
+            SNAPSHOT_NAME=$(date +'%Y-%m-%d_%H-%M-%S')
+            echo "Using default snapshot name: $SNAPSHOT_NAME"
+        fi
+        
+        SNAPSHOT_DIR="$BACKUP_DIR/$SNAPSHOT_NAME/localhost"
+        if [[ -d "$SNAPSHOT_DIR" ]]; then
+            echo "🔄 Snapshot '$SNAPSHOT_NAME' already exists. Updating it..."
+        else
+            echo "🆕 Creating new snapshot: $SNAPSHOT_NAME"
+            mkdir -p "$SNAPSHOT_DIR/"
+        fi
+    elif [[ "$ACTION" == "u" ]]; then
+        read -p "Enter the snapshot number you want to update: " SNAPSHOT_NUMBER
+        if [[ "$SNAPSHOT_NUMBER" -lt 1 || "$SNAPSHOT_NUMBER" -gt "${#SNAPSHOTS[@]}" ]]; then
+            echo "❌ Invalid snapshot number."
+            return
+        fi
+        SNAPSHOT_NAME="${SNAPSHOTS[$((SNAPSHOT_NUMBER-1))]}"
+        SNAPSHOT_DIR="$BACKUP_DIR/$SNAPSHOT_NAME/localhost"
+        echo "🔄 Updating snapshot: $SNAPSHOT_NAME"
+    else
+        echo "❌ Invalid action. Please choose 'new' or 'update'."
+        return
+    fi
+    
+    EXCLUDE_FILE="$BACKUP_DIR/$SNAPSHOT_NAME/exclude.list"
+
+    if [[ ! -f "$EXCLUDE_FILE" ]]; then
+        echo "📝 Creating the exclude file..."
+        for exclusion in "${EXCLUSIONS[@]}"; do
+            echo "$exclusion" >> "$EXCLUDE_FILE"
+        done
+    fi
+
+    # Run the rsync to backup files
+    rsync -ahv --exclude-from="$EXCLUDE_FILE" --delete --numeric-ids --hard-links --inplace --info=progress2 / "$SNAPSHOT_DIR/"
+    if [[ $? -eq 0 ]]; then
+        echo "✅ Backup completed successfully."
+
+        JSON_FILE="$BACKUP_DIR/$SNAPSHOT_NAME/info.json"
+        CREATED=$(date +%s)
+        SYS_UUID=$(cat /sys/class/dmi/id/product_uuid 2>/dev/null || uuidgen)
+        SYS_DISTRO=$(echo "$(grep ^NAME /etc/os-release | cut -d= -f2 | tr -d '"') $(grep ^VERSION_ID /etc/os-release | cut -d= -f2 | tr -d '"')")
+        APP_VERSION=$(rsync --version | head -n 1 | awk '{print $3}')
+        FILE_COUNT=$(find "$SNAPSHOT_DIR" -type f | wc -l)
+        TAGS="ondemand"
+        COMMENTS="Backup after system update"
+        LIVE="false"
+        TYPE="rsync"
+
+        # json
+        cat <<EOF > "$JSON_FILE"
+{
+  "created": "$CREATED",
+  "sys-uuid": "$SYS_UUID",
+  "sys-distro": "$SYS_DISTRO",
+  "app-version": "$APP_VERSION",
+  "file_count": "$FILE_COUNT",
+  "tags": "$TAGS",
+  "comments": "$COMMENTS",
+  "live": "$LIVE",
+  "type": "$TYPE"
+}
+EOF
+
+        echo "📜 Metadata saved to: $JSON_FILE"
+    else
+        echo "❌ Backup failed. JSON file was not created."
+    fi
+}
+
+#Function to restore the system from a snapshot
+restore_system(){
+    echo "📂 Available snapshots:"
+    echo
+    SNAPSHOTS=($(ls "$BACKUP_DIR"))
+    for i in "${!SNAPSHOTS[@]}"; do
+        echo "$((i+1))) ${SNAPSHOTS[$i]}"
+    done
+    echo
+    read -p "Enter the number of the
+snapshot you want to restore: " SNAPSHOT_NUMBER
+    if [[ "$SNAPSHOT_NUMBER" -lt 1 || "$SNAPSHOT_NUMBER" -gt "${#SNAPSHOTS[@]}" ]]; then
+        echo "❌ Invalid snapshot number."
+        return
+    fi
+    
+    SNAPSHOT_NAME="${SNAPSHOTS[$((SNAPSHOT_NUMBER-1))]}"
+    SNAPSHOT_DIR="$BACKUP_DIR/$SNAPSHOT_NAME/localhost"
+    
+    if [[ -d "$SNAPSHOT_DIR" ]]; then
+        echo "⚠️ Restoring the system will overwrite files on your root directory. Proceed with caution."
+        read -p "Do you want to continue with the restore? (yes/y to confirm): " CONFIRM_RESTORE
+        if [[ "$CONFIRM_RESTORE" == "yes" || "$CONFIRM_RESTORE" == "y" ]]; then
+            EXCLUDE_FILE="$BACKUP_DIR/$SNAPSHOT_NAME/exclude.list"
+
+            if [[ ! -f "$EXCLUDE_FILE" ]]; then
+                echo "📝 Creating the exclude file during restore..."
+                for exclusion in "${EXCLUSIONS[@]}"; do
+                    echo "$exclusion" >> "$EXCLUDE_FILE"
+                done
+            fi
+
+            rsync -ahv --exclude-from="$EXCLUDE_FILE" --delete --numeric-ids --hard-links --info=progress2 "$SNAPSHOT_DIR/" /
+            if [[ $? -eq 0 ]]; then
+                echo "✅ System restored successfully from $SNAPSHOT_NAME."
+            else
+                echo "❌ Restore failed."
+            fi
+        else
+            echo "Restore operation cancelled. ❌"
+        fi
+    else
+        echo "❌ Snapshot not found: $SNAPSHOT_NAME"
+    fi
+}
+
+# Main menu function to display options
+start(){
+    echo "1) 📀 Create a backup"
+    echo "2) ♻ Restore System"
+    echo "3) ❌ Exit"
+    read -p "Enter your choice(1/2/3)🚀: " CHOICE
+
+    case $CHOICE in
+        1) backup_system ;;
+        2) restore_system ;;
+        3) echo "Exiting... 👋"; exit 0 ;;
+        *) echo "❌ Invalid choice, please try again." ;;
+    esac
+}
+
+# Run the start function to show the main menu
+start
