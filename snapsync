@@ -40,7 +40,7 @@ EXCLUSIONS=(
     "/home/*/.mozilla/firefox/*.default/OfflineCache" "/home/*/.opera/cache" "/home/*/.kde/share/apps/kio_http/cache"
     "/home/*/.kde/share/cache/http" "/var/cache/apt/archives/*" "/var/cache/pacman/pkg/*" "/var/cache/yum/*"
     "/var/cache/dnf/*" "/var/cache/eopkg/*" "/var/cache/xbps/*" "/var/cache/zypp/*" "/var/cache/edb/*"
-    "/home/ismail/**" "/root/**" "/home/*/**"
+    "/root/**" "/home/*/**"
 )
 
 #Function to create or update the backup
@@ -58,7 +58,7 @@ backup_system(){
   [N] Create a new snapshot
   [U] Update an existing snapshot
 Enter your choice (N/U): " ACTION
-    ACTION=$(echo "$ACTION" | tr '[:upper:]' '[:lower:]')  # تحويل الإدخال إلى أحرف صغيرة
+    ACTION=$(echo "$ACTION" | tr '[:upper:]' '[:lower:]')
 
     
     if [[ "$ACTION" == "n" ]]; then
