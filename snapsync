@@ -22,12 +22,10 @@ if ! command -v rsync &> /dev/null; then
     echo "rsync has been installed successfully."
 fi
 
-
 BACKUP_DIR="~/snapsync/snapshots"
 SNAPSHOT_NAME=""
 SNAPSHOT_DIR=""
 EXCLUDE_FILE=""
-
 
 EXCLUSIONS=(
     "/dev/*" "/proc/*" "/sys/*" "/media/*" "/mnt/*" "/tmp/*" "/run/*" "/var/run/*" "/var/lock/*" "/var/lib/dhcpcd/*"
@@ -59,7 +57,6 @@ backup_system(){
   [U] Update an existing snapshot
 Enter your choice (N/U): " ACTION
     ACTION=$(echo "$ACTION" | tr '[:upper:]' '[:lower:]')
-
     
     if [[ "$ACTION" == "n" ]]; then
         read -p "Do you want to enter a custom snapshot name? (yes/y to enter, any key for default): " USE_CUSTOM_NAME
